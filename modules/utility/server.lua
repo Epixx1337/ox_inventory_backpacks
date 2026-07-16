@@ -56,7 +56,13 @@ lib.callback.register('ox_inventory:removeArmourPlates', function(source)
 
     if plates == 0 then return false, 'armour_no_plates' end
 
-    if not Inventory.AddItem(inv, Utility.armour.item, plates) then return false, 'cannot_carry' end
+    local maxArmour = math.min(plates * Utility.armour.armourPerPlate, 100)
+    local armourLeft = vest.metadata.armour or maxArmour
+
+    -- a plate is only recoverable while undamaged; a partially worn plate is destroyed with the armour it had left
+    local intact = armourLeft >= maxArmour and plates or math.floor(armourLeft / Utility.armour.armourPerPlate)
+
+    if intact > 0 and not Inventory.AddItem(inv, Utility.armour.item, intact) then return false, 'cannot_carry' end
 
     local metadata = table.clone(vest.metadata)
     metadata.plates = 0
@@ -65,7 +71,7 @@ lib.callback.register('ox_inventory:removeArmourPlates', function(source)
     Inventory.SetMetadata(inv, vest.slot, metadata)
 
     if server.loglevel > 0 then
-        lib.logger(inv.owner, 'armourPlates', ('"%s" removed %sx plates from "%s"'):format(inv.label, plates, vest.name))
+        lib.logger(inv.owner, 'armourPlates', ('"%s" removed %sx plates from "%s" (%s destroyed)'):format(inv.label, intact, vest.name, plates - intact))
     end
 
     return 0

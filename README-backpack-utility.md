@@ -241,8 +241,17 @@ Item images used by the UI: `web/images/<item>.png`.
 - Ped armour is applied client-side from `metadata.armour`: on login, on
   equip/unequip and after plate actions. A 1s monitor reports armour loss to the
   server, which only ever *lowers* the stored value — a client can never report
-  its way to more armour, broken plates are consumed rather than refunded, and
-  re-syncs never heal the ped above its current armour value.
+  its way to more armour, and re-syncs never heal the ped above its current
+  armour value.
+- **Remove Plates only refunds undamaged plates**: a plate is recoverable while
+  it still holds a full `armourPerPlate`, so with the default 50/plate a vest at
+  100 returns 2 plates, at 60 returns 1 (the worn plate is destroyed along with
+  its remaining 10), and at 10 returns none. This is what stops remove+reinsert
+  from being a free vest repair.
+- `metadata.plates` is `ceil(armour / armourPerPlate)` — a partly worn plate is
+  still a plate that stops bullets, and it caps the armour the vest can hold.
+  The *refund* uses `floor`, which is why a damaged plate protects you but
+  cannot be taken back out.
 - Because the damaged value is what persists, relogging restores the armour a
   player logged out with rather than a full set of plates. Up to 1s of damage
   can be lost to an abrupt disconnect, which favours the player slightly.
