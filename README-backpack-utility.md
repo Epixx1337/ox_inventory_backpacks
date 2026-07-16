@@ -13,7 +13,8 @@ Adds three features on top of stock ox_inventory (v2.47.9):
    stash. Equipping armour likewise shows a vest on the ped.
 3. **Armour plates** — the vest is equipped (not used); armour plates are
    inserted into it through the vest's context menu, ped armour comes from the
-   plate count, and taking damage breaks plates. Plates travel with the vest.
+   plates, and taking damage wears them down and breaks them. Plates and the
+   remaining armour travel with the vest and survive a relog.
 4. **Collapsible panels & bag interactions** — every inventory panel can be
    collapsed with a chevron; carried bags can be opened below the right inventory
    via their context menu (the same panel scripts can use to show a robbed
@@ -229,18 +230,22 @@ Item images used by the UI: `web/images/<item>.png`.
   only, so metadata updates (plates, bag weight) never replay it.
 
 ### Armour plates
-- The worn vest stores its plate count in `metadata.plates`, so plates persist
-  and travel with the vest through stashes, drops and trades.
+- The worn vest stores its plate count in `metadata.plates` and its exact
+  remaining armour in `metadata.armour`, so both persist and travel with the vest
+  through stashes, drops and trades.
 - Plates are inserted by **using the plate item** (its `client.event` points at
   `ox_inventory:insertArmourPlate`) or through the vest's context menu buttons.
   Both close the inventory, run a progress bar, then a server callback validates
   the worn vest and the plate items before touching metadata
   (`modules/utility/server.lua`).
-- Ped armour is applied client-side from the plate count: on login, on
+- Ped armour is applied client-side from `metadata.armour`: on login, on
   equip/unequip and after plate actions. A 1s monitor reports armour loss to the
-  server, which only ever *lowers* the stored plate count (broken plates are
-  consumed, not refunded), and re-syncs never heal the ped above its current
-  armour value.
+  server, which only ever *lowers* the stored value — a client can never report
+  its way to more armour, broken plates are consumed rather than refunded, and
+  re-syncs never heal the ped above its current armour value.
+- Because the damaged value is what persists, relogging restores the armour a
+  player logged out with rather than a full set of plates. Up to 1s of damage
+  can be lost to an abrupt disconnect, which favours the player slightly.
 
 ### Safeguards
 - `backpack`/`rightbackpack` swap types are validated against the exploit guard:

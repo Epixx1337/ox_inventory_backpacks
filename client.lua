@@ -1428,7 +1428,7 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 
 	syncUtilityClothing()
 
-	if Utility.SyncArmour then Utility.SyncArmour() end
+	if Utility.SyncArmour then Utility.SyncArmour(true) end
 
 	PlayerData.loaded = true
 

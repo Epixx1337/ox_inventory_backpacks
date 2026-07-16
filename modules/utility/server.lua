@@ -32,6 +32,7 @@ lib.callback.register('ox_inventory:insertArmourPlate', function(source)
 
     local metadata = table.clone(vest.metadata)
     metadata.plates = plates + 1
+    metadata.armour = math.min(metadata.plates * Utility.armour.armourPerPlate, 100)
 
     Inventory.SetMetadata(inv, vest.slot, metadata)
 
@@ -59,6 +60,7 @@ lib.callback.register('ox_inventory:removeArmourPlates', function(source)
 
     local metadata = table.clone(vest.metadata)
     metadata.plates = 0
+    metadata.armour = 0
 
     Inventory.SetMetadata(inv, vest.slot, metadata)
 
@@ -84,18 +86,21 @@ RegisterNetEvent('ox_inventory:updateArmourPlates', function(currentArmour)
 
     if plates == 0 then return end
 
-    currentArmour = math.max(0, math.min(currentArmour, 100))
+    currentArmour = math.floor(math.max(0, math.min(currentArmour, 100)))
+
+    local stored = vest.metadata.armour or math.min(plates * Utility.armour.armourPerPlate, 100)
+
+    -- clients may only ever report damage, never healing
+    if currentArmour >= stored then return end
 
     local allowed = math.ceil(currentArmour / Utility.armour.armourPerPlate)
-
-    if allowed >= plates then return end
-
     local metadata = table.clone(vest.metadata)
+    metadata.armour = currentArmour
     metadata.plates = allowed
 
     Inventory.SetMetadata(inv, vest.slot, metadata)
 
-    if server.loglevel > 1 then
+    if server.loglevel > 1 and allowed < plates then
         lib.logger(inv.owner, 'armourPlates', ('"%s" broke %sx plates in "%s" (%s remaining)'):format(inv.label, plates - allowed, vest.name, allowed))
     end
 end)

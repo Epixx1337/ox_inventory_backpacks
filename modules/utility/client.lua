@@ -59,8 +59,11 @@ if armour and Utility.armourSlot then
     local plateBusy = false
     local wearingVest = false
 
-    function Utility.SyncArmour()
+    ---@param restore boolean? player just loaded in; apply the stored value instead of clamping to the current ped
+    function Utility.SyncArmour(restore)
         local vest = PlayerData.inventory[Utility.armourSlot]
+
+        if restore then wearingVest = false end
 
         if not vest then
             if wearingVest then
@@ -71,7 +74,8 @@ if armour and Utility.armourSlot then
             return
         end
 
-        local desired = math.min((vest.metadata?.plates or 0) * armour.armourPerPlate, 100)
+        local maxArmour = math.min((vest.metadata?.plates or 0) * armour.armourPerPlate, 100)
+        local desired = math.min(vest.metadata?.armour or maxArmour, maxArmour)
 
         if wearingVest then
             desired = math.min(desired, GetPedArmour(cache.ped))
@@ -118,19 +122,28 @@ if armour and Utility.armourSlot then
         plateAction('ox_inventory:removeArmourPlates', locale('armour_removing_plates'), locale('armour_plates_removed'))
     end)
 
+    local lastSynced
+
     SetInterval(function()
         if not PlayerData.loaded then return end
 
         local vest = PlayerData.inventory[Utility.armourSlot]
         local plates = vest and vest.metadata?.plates or 0
 
-        if plates == 0 then return end
-
-        local current = GetPedArmour(cache.ped)
-
-        if math.ceil(current / armour.armourPerPlate) < plates then
-            TriggerServerEvent('ox_inventory:updateArmourPlates', current)
+        if not vest or plates == 0 then
+            lastSynced = nil
+            return
         end
+
+        local current = math.floor(GetPedArmour(cache.ped))
+        local stored = vest.metadata?.armour or math.min(plates * armour.armourPerPlate, 100)
+
+        -- only report damage; the server ignores anything that would raise the stored value
+        if current >= stored or current == lastSynced then return end
+
+        lastSynced = current
+
+        TriggerServerEvent('ox_inventory:updateArmourPlates', current)
     end, 1000)
 end
 
