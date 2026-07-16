@@ -1,12 +1,21 @@
 import React, { useCallback, useRef } from 'react';
 import { DragSource, Inventory, InventoryType, Slot, SlotWithItem } from '../../typings';
 import { useDrag, useDragDropManager, useDrop } from 'react-dnd';
-import { useAppDispatch } from '../../store';
+import { store, useAppDispatch } from '../../store';
 import WeightBar from '../utils/WeightBar';
 import { onDrop } from '../../dnd/onDrop';
 import { onBuy } from '../../dnd/onBuy';
 import { Items } from '../../store/items';
-import { canCraftItem, canPurchaseItem, getItemUrl, isSlotWithItem } from '../../helpers';
+import {
+  canCraftItem,
+  canMoveBetweenSlots,
+  canPurchaseItem,
+  getItemUrl,
+  getSlotHotkey,
+  getTargetInventory,
+  isSlotWithItem,
+  isUtilitySlot,
+} from '../../helpers';
 import { onUse } from '../../dnd/onUse';
 import { Locale } from '../../store/locale';
 import { onCraft } from '../../dnd/onCraft';
@@ -77,10 +86,21 @@ const InventorySlot: React.ForwardRefRenderFunction<HTMLDivElement, SlotProps> =
             break;
         }
       },
-      canDrop: (source) =>
-        (source.item.slot !== item.slot || source.inventory !== inventoryType) &&
-        inventoryType !== InventoryType.SHOP &&
-        inventoryType !== InventoryType.CRAFTING,
+      canDrop: (source) => {
+        if (source.item.slot === item.slot && source.inventory === inventoryType) return false;
+        if (inventoryType === InventoryType.SHOP || inventoryType === InventoryType.CRAFTING) return false;
+
+        if (source.inventory === InventoryType.SHOP || source.inventory === InventoryType.CRAFTING)
+          return inventoryType === InventoryType.PLAYER && !isUtilitySlot(item.slot);
+
+        const { inventory: state } = store.getState();
+        const { sourceInventory } = getTargetInventory(state, source.inventory);
+        const sourceSlot = sourceInventory.items[source.item.slot - 1];
+
+        if (!sourceSlot) return false;
+
+        return canMoveBetweenSlots(source.inventory, sourceSlot, inventoryType, item);
+      },
     }),
     [inventoryType, item]
   );
@@ -105,9 +125,13 @@ const InventorySlot: React.ForwardRefRenderFunction<HTMLDivElement, SlotProps> =
 
   const handleContext = (event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
-    if (inventoryType !== 'player' || !isSlotWithItem(item)) return;
+    if (
+      (inventoryType !== InventoryType.PLAYER && inventoryType !== InventoryType.BACKPACK) ||
+      !isSlotWithItem(item)
+    )
+      return;
 
-    dispatch(openContextMenu({ item, coords: { x: event.clientX, y: event.clientY } }));
+    dispatch(openContextMenu({ item, coords: { x: event.clientX, y: event.clientY }, inventoryType }));
   };
 
   const handleClick = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -115,8 +139,12 @@ const InventorySlot: React.ForwardRefRenderFunction<HTMLDivElement, SlotProps> =
     if (timerRef.current) clearTimeout(timerRef.current);
     if (event.ctrlKey && isSlotWithItem(item) && inventoryType !== 'shop' && inventoryType !== 'crafting') {
       onDrop({ item: item, inventory: inventoryType });
-    } else if (event.altKey && isSlotWithItem(item) && inventoryType === 'player') {
-      onUse(item);
+    } else if (event.altKey && isSlotWithItem(item)) {
+      if (inventoryType === 'player') {
+        onUse(item);
+      } else if (inventoryType === InventoryType.BACKPACK || inventoryType === InventoryType.RIGHTBACKPACK) {
+        onDrop({ item: item, inventory: inventoryType }, { inventory: InventoryType.PLAYER, item: { slot: 0 } });
+      }
     }
   };
 
@@ -156,10 +184,14 @@ const InventorySlot: React.ForwardRefRenderFunction<HTMLDivElement, SlotProps> =
         >
           <div
             className={
-              inventoryType === 'player' && item.slot <= 5 ? 'item-hotslot-header-wrapper' : 'item-slot-header-wrapper'
+              getSlotHotkey(item.slot, inventoryType) !== undefined
+                ? 'item-hotslot-header-wrapper'
+                : 'item-slot-header-wrapper'
             }
           >
-            {inventoryType === 'player' && item.slot <= 5 && <div className="inventory-slot-number">{item.slot}</div>}
+            {getSlotHotkey(item.slot, inventoryType) !== undefined && (
+              <div className="inventory-slot-number">{getSlotHotkey(item.slot, inventoryType)}</div>
+            )}
             <div className="item-slot-info-wrapper">
               <p>
                 {item.weight > 0

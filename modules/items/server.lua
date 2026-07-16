@@ -145,6 +145,16 @@ local function GenerateSerial(text)
 	return ('%s%s%s'):format(math.random(100000,999999), text == nil and GenerateText(3) or text, math.random(100000,999999))
 end
 
+local function setBackpackMetadata(item, metadata)
+	if not metadata.id then
+		metadata.id = ('BPK%s%s'):format(GenerateText(2), math.random(100000, 999999))
+	end
+
+	if metadata.label == ('%s %s'):format(item.label, metadata.id) then
+		metadata.label = nil
+	end
+end
+
 local function setItemDurability(item, metadata)
 	local degrade = item.degrade
 
@@ -212,6 +222,11 @@ function Items.Metadata(inv, item, metadata, count)
 			end
 		end
 
+		if item.backpack then
+			count = 1
+			setBackpackMetadata(item, metadata)
+		end
+
 		if not metadata.durability then
 			metadata = setItemDurability(ItemList[item.name], metadata)
 		end
@@ -255,6 +270,10 @@ function Items.CheckMetadata(metadata, item, name, ostime)
 		metadata.container = metadata.bag
 		metadata.size = Items.containers[name]?.size or {5, 1000}
 		metadata.bag = nil
+	end
+
+	if item.backpack then
+		setBackpackMetadata(item, metadata)
 	end
 
 	local durability = metadata.durability

@@ -32,7 +32,7 @@ const InventoryControl: React.FC = () => {
   const [, give] = useDrop<DragSource, void, any>(() => ({
     accept: 'SLOT',
     drop: (source) => {
-      source.inventory === 'player' && onGive(source.item);
+      (source.inventory === 'player' || source.inventory === 'backpack') && onGive(source.item, source.inventory);
     },
   }));
 

@@ -7,7 +7,7 @@ import {
   stackSlotsReducer,
   swapSlotsReducer,
 } from '../reducers';
-import { State } from '../typings';
+import { State, UtilitySlotConfig } from '../typings';
 
 const initialState: State = {
   leftInventory: {
@@ -24,6 +24,21 @@ const initialState: State = {
     maxWeight: 0,
     items: [],
   },
+  backpackInventory: {
+    id: '',
+    type: '',
+    slots: 0,
+    maxWeight: 0,
+    items: [],
+  },
+  rightBackpackInventory: {
+    id: '',
+    type: '',
+    slots: 0,
+    maxWeight: 0,
+    items: [],
+  },
+  utility: [],
   additionalMetadata: new Array(),
   itemAmount: 0,
   shiftPressed: false,
@@ -55,12 +70,20 @@ export const inventorySlice = createSlice({
     setShiftPressed: (state, action: PayloadAction<boolean>) => {
       state.shiftPressed = action.payload;
     },
-    setContainerWeight: (state, action: PayloadAction<number>) => {
-      const container = state.leftInventory.items.find((item) => item.metadata?.container === state.rightInventory.id);
+    setUtilityConfig: (state, action: PayloadAction<UtilitySlotConfig[]>) => {
+      state.utility = action.payload || [];
+    },
+    setContainerWeight: (state, action: PayloadAction<{ containerId: string; weight: number }>) => {
+      const { containerId, weight } = action.payload;
+      const container = state.leftInventory.items.find(
+        (item) =>
+          item.metadata?.container === containerId ||
+          (item.metadata?.id !== undefined && `backpack-${item.metadata.id}` === containerId)
+      );
 
       if (!container) return;
 
-      container.weight = action.payload;
+      container.weight = weight;
     },
   },
   extraReducers: (builder) => {
@@ -70,6 +93,8 @@ export const inventorySlice = createSlice({
       state.history = {
         leftInventory: current(state.leftInventory),
         rightInventory: current(state.rightInventory),
+        backpackInventory: current(state.backpackInventory),
+        rightBackpackInventory: current(state.rightBackpackInventory),
       };
     });
     builder.addMatcher(isFulfilled, (state) => {
@@ -79,6 +104,9 @@ export const inventorySlice = createSlice({
       if (state.history && state.history.leftInventory && state.history.rightInventory) {
         state.leftInventory = state.history.leftInventory;
         state.rightInventory = state.history.rightInventory;
+
+        if (state.history.backpackInventory) state.backpackInventory = state.history.backpackInventory;
+        if (state.history.rightBackpackInventory) state.rightBackpackInventory = state.history.rightBackpackInventory;
       }
       state.isBusy = false;
     });
@@ -95,9 +123,13 @@ export const {
   stackSlots,
   refreshSlots,
   setContainerWeight,
+  setUtilityConfig,
 } = inventorySlice.actions;
 export const selectLeftInventory = (state: RootState) => state.inventory.leftInventory;
 export const selectRightInventory = (state: RootState) => state.inventory.rightInventory;
+export const selectBackpackInventory = (state: RootState) => state.inventory.backpackInventory;
+export const selectRightBackpackInventory = (state: RootState) => state.inventory.rightBackpackInventory;
+export const selectUtilityConfig = (state: RootState) => state.inventory.utility;
 export const selectItemAmount = (state: RootState) => state.inventory.itemAmount;
 export const selectIsBusy = (state: RootState) => state.inventory.isBusy;
 

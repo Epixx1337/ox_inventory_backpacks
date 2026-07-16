@@ -70,6 +70,16 @@ const UsefulControls: React.FC<Props> = ({ infoVisible, setInfoVisible }) => {
                     <br />
                     {Locale.ui_ctrl_shift_lmb}
                   </p>
+                  <p>
+                    <kbd>ALT + LMB (bag)</kbd>
+                    <br />
+                    {Locale.ui_alt_lmb_bag}
+                  </p>
+                  <p>
+                    <kbd>RMB (bag item)</kbd>
+                    <br />
+                    {Locale.ui_rmb_bag}
+                  </p>
                   <div style={{ textAlign: 'right' }}>🐂</div>
                 </div>
               </div>

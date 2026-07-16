@@ -24,6 +24,11 @@ shared = {
 
 shared.dropslots = GetConvarInt('inventory:dropslots', shared.playerslots)
 shared.dropweight = GetConvarInt('inventory:dropweight', shared.playerweight)
+shared.utilityslots = GetConvar('inventory:utilityslots', '')
+shared.backpackcarryweight = GetConvarInt('inventory:backpackcarryweight', 60)
+shared.backpackstorageweight = GetConvarInt('inventory:backpackstorageweight', 30)
+shared.utilityclothing = GetConvar('inventory:utilityclothing', '')
+shared.armourplates = GetConvar('inventory:armourplates', '')
 
 do
     if type(shared.police) == 'string' then

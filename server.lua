@@ -14,6 +14,7 @@ local db = require 'modules.mysql.server'
 local Items = require 'modules.items.server'
 local Inventory = require 'modules.inventory.server'
 local Utils = require 'modules.utils.server'
+local Utility = require 'modules.utility.server'
 
 ---@param player table
 ---@param data table?
@@ -135,6 +136,7 @@ local function openInventory(source, invType, data, ignoreSecurityChecks)
     if not left then return end
 
     left:closeInventory(true)
+    Inventory.CloseRightBackpack(left)
     Inventory.CloseAll(left, source)
 
     if invType == 'player' and data == source then
@@ -228,6 +230,9 @@ local function openInventory(source, invType, data, ignoreSecurityChecks)
                 end
             end
         elseif invType == 'container' then
+            -- never open it as the right inventory
+            if Utility.backpackSlot and data == Utility.backpackSlot then return false end
+
             left.containerSlot = data --[[@as number]]
             data = left.items[data]
 
@@ -339,6 +344,22 @@ lib.callback.register('ox_inventory:isVehicleATrailer', function(source, netId)
     local entity = NetworkGetEntityFromNetworkId(netId)
     local retval = GetVehicleType(entity)
     return retval == 'trailer'
+end)
+
+lib.callback.register('ox_inventory:openBackpack', function(source)
+    local inventory = Inventory(source)
+
+    if not inventory or not inventory.open then return false end
+
+    return Inventory.OpenBackpack(inventory) or false
+end)
+
+lib.callback.register('ox_inventory:openRightBackpack', function(source, slot)
+    local inventory = Inventory(source)
+
+    if not inventory or not inventory.open or type(slot) ~= 'number' then return false end
+
+    return Inventory.OpenRightBackpack(inventory, slot) or false
 end)
 
 ---@param playerId number

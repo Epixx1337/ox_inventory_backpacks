@@ -4,11 +4,12 @@ import { onDrop } from '../../dnd/onDrop';
 import { Items } from '../../store/items';
 import { fetchNui } from '../../utils/fetchNui';
 import { Locale } from '../../store/locale';
-import { isSlotWithItem } from '../../helpers';
+import { isBackpackItem, isSlotWithItem, isUtilitySlot } from '../../helpers';
 import { setClipboard } from '../../utils/setClipboard';
 import { useAppSelector } from '../../store';
 import React from 'react';
 import { Menu, MenuItem } from '../utils/menu/Menu';
+import { InventoryType } from '../../typings';
 
 interface DataProps {
   action: string;
@@ -38,6 +39,11 @@ interface GroupedButtons extends Array<Group> {}
 const InventoryContext: React.FC = () => {
   const contextMenu = useAppSelector((state) => state.contextMenu);
   const item = contextMenu.item;
+  const inventoryType = contextMenu.inventoryType || InventoryType.PLAYER;
+
+  const isBag = item ? isBackpackItem(item.name) : false;
+  const showUse = inventoryType !== InventoryType.BACKPACK && !isBag;
+  const canOpenBag = !!item && inventoryType === InventoryType.PLAYER && isBag && !isUtilitySlot(item.slot);
 
   const handleClick = (data: DataProps) => {
     if (!item) return;
@@ -47,10 +53,13 @@ const InventoryContext: React.FC = () => {
         onUse({ name: item.name, slot: item.slot });
         break;
       case 'give':
-        onGive({ name: item.name, slot: item.slot });
+        onGive({ name: item.name, slot: item.slot }, inventoryType);
         break;
       case 'drop':
-        isSlotWithItem(item) && onDrop({ item: item, inventory: 'player' });
+        isSlotWithItem(item) && onDrop({ item: item, inventory: inventoryType });
+        break;
+      case 'openBackpack':
+        fetchNui('openBagPanel', item.slot);
         break;
       case 'remove':
         fetchNui('removeComponent', { component: data?.component, slot: data?.slot });
@@ -92,9 +101,15 @@ const InventoryContext: React.FC = () => {
   return (
     <>
       <Menu>
-        <MenuItem onClick={() => handleClick({ action: 'use' })} label={Locale.ui_use || 'Use'} />
+        {showUse && <MenuItem onClick={() => handleClick({ action: 'use' })} label={Locale.ui_use || 'Use'} />}
         <MenuItem onClick={() => handleClick({ action: 'give' })} label={Locale.ui_give || 'Give'} />
         <MenuItem onClick={() => handleClick({ action: 'drop' })} label={Locale.ui_drop || 'Drop'} />
+        {canOpenBag && (
+          <MenuItem
+            onClick={() => handleClick({ action: 'openBackpack' })}
+            label={Locale.ui_open_backpack || 'Open Backpack'}
+          />
+        )}
         {item && item.metadata?.ammo > 0 && (
           <MenuItem onClick={() => handleClick({ action: 'removeAmmo' })} label={Locale.ui_remove_ammo} />
         )}

@@ -114,6 +114,30 @@ return {
 		consume = 0
 	},
 
+	['backpack'] = {
+		label = 'Backpack',
+		weight = 2000,
+		stack = false,
+		close = true,
+		consume = 0,
+		backpack = {
+			slots = 20,
+			maxWeight = 20000
+		}
+	},
+
+	['duffelbag'] = {
+		label = 'Duffel Bag',
+		weight = 3000,
+		stack = false,
+		close = true,
+		consume = 0,
+		backpack = {
+			slots = 30,
+			maxWeight = 30000
+		}
+	},
+
 	['identification'] = {
 		label = 'Identification',
 		client = {
@@ -198,9 +222,29 @@ return {
 		label = 'Bulletproof Vest',
 		weight = 3000,
 		stack = false,
+		consume = 0,
+		buttons = {
+			{
+				label = 'Insert Plate',
+				action = function(slot)
+					TriggerEvent('ox_inventory:insertArmourPlate', slot)
+				end
+			},
+			{
+				label = 'Remove Plates',
+				action = function(slot)
+					TriggerEvent('ox_inventory:removeArmourPlates', slot)
+				end
+			}
+		}
+	},
+
+	['armour_plate'] = {
+		label = 'Armour Plate',
+		weight = 1000,
+		consume = 0,
 		client = {
-			anim = { dict = 'clothingshirt', clip = 'try_shirt_positive_d' },
-			usetime = 3500
+			event = 'ox_inventory:insertArmourPlate'
 		}
 	},
 

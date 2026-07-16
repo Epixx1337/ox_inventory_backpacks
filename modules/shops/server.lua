@@ -3,6 +3,7 @@ if not lib then return end
 local Items = require 'modules.items.server'
 local Inventory = require 'modules.inventory.server'
 local TriggerEventHooks = require 'modules.hooks.server'
+local Utility = require 'modules.utility.shared'
 local Shops = {}
 local locations = shared.target and 'targets' or 'locations'
 
@@ -200,6 +201,8 @@ end
 lib.callback.register('ox_inventory:buyItem', function(source, data)
 	if data.toType == 'player' then
 		data.count = math.max(1, math.floor(data.count or 1))
+
+		if Utility.bySlot[data.toSlot] then return false end
 
 		local playerInv = Inventory(source)
 

@@ -1,4 +1,4 @@
-import { canStack, findAvailableSlot, getTargetInventory, isSlotWithItem } from '../helpers';
+import { canMoveBetweenSlots, canStack, findAvailableSlot, getTargetInventory, isSlotWithItem } from '../helpers';
 import { validateMove } from '../thunks/validateItems';
 import { store } from '../store';
 import { DragSource, DropTarget, InventoryType, SlotWithItem } from '../typings';
@@ -18,24 +18,24 @@ export const onDrop = (source: DragSource, target?: DropTarget) => {
 
   // If dragging from container slot
   if (sourceSlot.metadata?.container !== undefined) {
-    // Prevent storing container in container
-    if (targetInventory.type === InventoryType.CONTAINER)
-      return console.log(`Cannot store container ${sourceSlot.name} inside another container`);
-
     // Prevent dragging of container slot when opened
     if (state.rightInventory.id === sourceSlot.metadata.container)
       return console.log(`Cannot move container ${sourceSlot.name} when opened`);
   }
 
-  const targetSlot = target
-    ? targetInventory.items[target.item.slot - 1]
-    : findAvailableSlot(sourceSlot, sourceData, targetInventory.items);
+  const targetSlot =
+    target && target.item.slot > 0
+      ? targetInventory.items[target.item.slot - 1]
+      : findAvailableSlot(sourceSlot, sourceData, targetInventory.items, targetInventory.type);
 
   if (targetSlot === undefined) return console.error('Target slot undefined!');
 
   // If dropping on container slot when opened
   if (targetSlot.metadata?.container !== undefined && state.rightInventory.id === targetSlot.metadata.container)
     return console.log(`Cannot swap item ${sourceSlot.name} with container ${targetSlot.name} when opened`);
+
+  if (!canMoveBetweenSlots(sourceInventory.type, sourceSlot, targetInventory.type, targetSlot))
+    return console.log(`Cannot move ${sourceSlot.name} to that slot`);
 
   const count =
     state.shiftPressed && sourceSlot.count > 1 && sourceInventory.type !== 'shop'

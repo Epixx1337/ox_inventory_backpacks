@@ -377,6 +377,7 @@ local function minimal(inv)
 end
 
 local Items = require 'modules.items.server'
+local Utility = require 'modules.utility.shared'
 
 ---@param inv inventory
 ---@param item table | string
@@ -642,6 +643,8 @@ function Inventory.Remove(inv)
         Inventory.Drops[inv.id] = nil
     elseif inv.player then
         activeIdentifiers[inv.owner] = nil
+        Inventory.CloseBackpack(inv)
+        Inventory.CloseRightBackpack(inv)
     end
 
     for playerId in pairs(inv.openedBy) do
@@ -1142,6 +1145,12 @@ function Inventory.AddItem(inv, item, count, metadata, slot, cb)
 
 	metadata = assertMetadata(metadata)
 
+	-- allowed there (lets scripts equip gear intentionally); otherwise fall back to
+	-- automatic placement
+	if slot and inv.player and Utility.bySlot[slot] and not Utility.CanHoldItem(slot, item.name, item) then
+		slot = nil
+	end
+
 	if slot then
 		local slotData = inv.items[slot]
 		slotMetadata, slotCount = Items.Metadata(inv.id, item, metadata and table.clone(metadata) or {}, count)
@@ -1156,25 +1165,31 @@ function Inventory.AddItem(inv, item, count, metadata, slot, cb)
 		slotMetadata, slotCount = Items.Metadata(inv.id, item, metadata and table.clone(metadata) or {}, count)
 
 		for i = 1, inv.slots do
-			local slotData = items[i]
+			if inv.player and Utility.bySlot[i] then goto next_slot end
 
-			if item.stack and slotData ~= nil and slotData.name == item.name and table.matches(slotData.metadata, slotMetadata) then
-				toSlot = i
-				break
-			elseif not item.stack and not slotData then
-				if not toSlot then toSlot = {} end
+			do
+				local slotData = items[i]
 
-				toSlot[#toSlot + 1] = { slot = i, count = slotCount, metadata = slotMetadata }
-
-				if count == slotCount then
+				if item.stack and slotData ~= nil and slotData.name == item.name and table.matches(slotData.metadata, slotMetadata) then
+					toSlot = i
 					break
-				end
+				elseif not item.stack and not slotData then
+					if not toSlot then toSlot = {} end
 
-				count -= 1
-				slotMetadata, slotCount = Items.Metadata(inv.id, item, metadata and table.clone(metadata) or {}, count)
-			elseif not toSlot and not slotData then
-				toSlot = i
+					toSlot[#toSlot + 1] = { slot = i, count = slotCount, metadata = slotMetadata }
+
+					if count == slotCount then
+						break
+					end
+
+					count -= 1
+					slotMetadata, slotCount = Items.Metadata(inv.id, item, metadata and table.clone(metadata) or {}, count)
+				elseif not toSlot and not slotData then
+					toSlot = i
+				end
 			end
+
+			::next_slot::
 		end
 	end
 
@@ -1669,7 +1684,19 @@ local function dropItem(source, playerInventory, fromData, data)
 		lib.logger(playerInventory.owner, 'swapSlots', ('%sx %s transferred from "%s" to "%s"'):format(data.count, toData.name, playerInventory.label, dropId))
 	end
 
-	if server.syncInventory then server.syncInventory(playerInventory) end
+	if server.syncInventory and playerInventory.player then server.syncInventory(playerInventory) end
+
+	if data.fromType == 'backpack' then
+		local ownerInventory = Inventories[source]
+		local bagSlot = ownerInventory and Utility.backpackSlot and ownerInventory.items[Utility.backpackSlot]
+
+		if ownerInventory and bagSlot then
+			Inventory.SyncBackpackItemWeight(ownerInventory, bagSlot, playerInventory.weight)
+			ownerInventory:syncSlotsWithPlayer({
+				{ item = bagSlot, inventory = ownerInventory.id }
+			}, ownerInventory.weight)
+		end
+	end
 
 	return true, {
 		weight = playerInventory.weight,
@@ -1684,13 +1711,250 @@ end
 
 local GetLocks = require 'modules.locks'
 
+-- (metadata.id, assigned by Items.Metadata / Items.CheckMetadata) which names its
+
+---@param name string
+---@return table?
+function Inventory.GetBackpackItem(name)
+    local item = Items(name)
+
+    return item?.backpack and item or nil
+end
+
+---@param slotData table bag item slot data (requires metadata.id)
+---@return OxInventory?
+local function getBackpackStash(slotData)
+    local itemDef = Inventory.GetBackpackItem(slotData.name)
+    local serial = itemDef and slotData.metadata?.id
+
+    if not serial then return end
+
+    local stashId = ('backpack-%s'):format(serial)
+
+    return Inventories[stashId] or Inventory.Create(stashId,
+        slotData.metadata.label or ('%s %s'):format(itemDef.label, serial), 'stash',
+        itemDef.backpack.slots or 20, 0, itemDef.backpack.maxWeight or 20000, false)
+end
+
+---@param holder OxInventory inventory holding the bag item
+---@param slotData table the bag item slot data
+---@param contentsWeight number current stash contents weight
+---@return number? bag item weight
+function Inventory.SyncBackpackItemWeight(holder, slotData, contentsWeight)
+    local itemDef = Items(slotData.name)
+
+    if not itemDef then return end
+
+    local percent = holder.player and Utility.carryWeightPercent or Utility.storageWeightPercent
+    local oldWeight = slotData.weight or 0
+
+    slotData.metadata.weight = math.floor(contentsWeight * percent / 100)
+    slotData.weight = Inventory.SlotWeight(itemDef, slotData)
+    holder.weight += slotData.weight - oldWeight
+
+    if holder.changed ~= nil then holder.changed = true end
+
+    return slotData.weight
+end
+
+---@param inv inventory
+---@param createMissing? boolean
+---@return OxInventory?
+function Inventory.GetEquippedBackpack(inv, createMissing)
+    if not Utility.backpackSlot then return end
+
+    inv = Inventory(inv) --[[@as OxInventory?]]
+
+    if not inv or not inv.player then return end
+
+    local slotData = inv.items[Utility.backpackSlot]
+
+    if not slotData or not Inventory.GetBackpackItem(slotData.name) then return end
+
+    local serial = slotData.metadata?.id
+
+    if not serial then return end
+
+    local stashId = ('backpack-%s'):format(serial)
+    local stash = Inventories[stashId]
+
+    if not stash and createMissing then
+        stash = getBackpackStash(slotData)
+    end
+
+    return stash
+end
+
+---@param inv inventory
+---@return OxInventory?
+function Inventory.GetOpenBackpack(inv)
+    inv = Inventory(inv) --[[@as OxInventory?]]
+
+    if not inv or not inv.backpack then return end
+
+    local container = Inventory.GetEquippedBackpack(inv)
+
+    if not container or container.id ~= inv.backpack or not container.openedBy[inv.id] then return end
+
+    return container
+end
+
+---@param inv inventory
+function Inventory.CloseBackpack(inv)
+    inv = Inventory(inv) --[[@as OxInventory?]]
+
+    if not inv or not inv.backpack then return end
+
+    local container = Inventories[inv.backpack]
+    inv.backpack = nil
+
+    if container then
+        container.openedBy[inv.id] = nil
+
+        if not next(container.openedBy) then
+            container:set('open', false)
+        end
+    end
+end
+
+---@param inv inventory
+---@return table?
+function Inventory.OpenBackpack(inv)
+    inv = Inventory(inv) --[[@as OxInventory?]]
+
+    if not inv or not inv.player then return end
+
+    Inventory.CloseBackpack(inv)
+
+    local container = Inventory.GetEquippedBackpack(inv, true)
+
+    if not container then return end
+
+    local hooks <close> = TriggerEventHooks('openInventory', {
+        source = inv.id,
+        inventoryId = container.id,
+        inventoryType = 'backpack',
+        slot = Utility.backpackSlot,
+    })
+
+    if not hooks.success then return end
+
+    container.openedBy[inv.id] = true
+    container:set('open', true)
+    inv.backpack = container.id
+
+    return {
+        id = container.id,
+        label = container.label,
+        type = 'backpack',
+        slots = container.slots,
+        weight = container.weight,
+        maxWeight = container.maxWeight,
+        items = container.items,
+    }
+end
+
+---@param inv inventory
+---@return OxInventory?
+function Inventory.GetOpenRightBackpack(inv)
+    inv = Inventory(inv) --[[@as OxInventory?]]
+
+    if not inv or not inv.rightBackpack or not inv.rightBackpackSlot then return end
+
+    local slotData = inv.items[inv.rightBackpackSlot]
+    local itemDef = slotData and Inventory.GetBackpackItem(slotData.name)
+    local serial = itemDef and slotData.metadata?.id
+
+    if not serial or ('backpack-%s'):format(serial) ~= inv.rightBackpack then return end
+
+    local stash = Inventories[inv.rightBackpack]
+
+    if not stash or not stash.openedBy[inv.id] then return end
+
+    return stash
+end
+
+---@param inv inventory
+function Inventory.CloseRightBackpack(inv)
+    inv = Inventory(inv) --[[@as OxInventory?]]
+
+    if not inv or not inv.rightBackpack then return end
+
+    local stash = Inventories[inv.rightBackpack]
+    inv.rightBackpack = nil
+    inv.rightBackpackSlot = nil
+
+    if stash then
+        stash.openedBy[inv.id] = nil
+
+        if not next(stash.openedBy) then
+            stash:set('open', false)
+        end
+    end
+end
+
+---@param inv inventory
+---@param slot number player inventory slot holding the bag
+---@return table?
+function Inventory.OpenRightBackpack(inv, slot)
+    inv = Inventory(inv) --[[@as OxInventory?]]
+
+    if not inv or not inv.player then return end
+    if slot == Utility.backpackSlot then return end
+
+    Inventory.CloseRightBackpack(inv)
+
+    local slotData = inv.items[slot]
+
+    if not slotData then return end
+
+    local stash = getBackpackStash(slotData)
+
+    if not stash or stash.id == inv.backpack then return end
+
+    local hooks <close> = TriggerEventHooks('openInventory', {
+        source = inv.id,
+        inventoryId = stash.id,
+        inventoryType = 'rightbackpack',
+        slot = slot,
+    })
+
+    if not hooks.success then return end
+
+    stash.openedBy[inv.id] = true
+    stash:set('open', true)
+    inv.rightBackpack = stash.id
+    inv.rightBackpackSlot = slot
+
+    return {
+        id = stash.id,
+        label = stash.label,
+        type = 'rightbackpack',
+        slots = stash.slots,
+        weight = stash.weight,
+        maxWeight = stash.maxWeight,
+        items = stash.items,
+    }
+end
+
+
 ---@param source number
 ---@param data SwapSlotData
 lib.callback.register('ox_inventory:swapItems', function(source, data)
-	if data.fromType ~= data.toType and data.toType ~= 'player' and data.fromType ~= 'player' then
-        Utils.LogExploit(source, 'swapItems', 'Triggered event with invalid data', true)
-        return
-    end
+	if data.fromType ~= data.toType then
+		local involvesRightBackpack = data.fromType == 'rightbackpack' or data.toType == 'rightbackpack'
+		local involvesBackpack = data.fromType == 'backpack' or data.toType == 'backpack'
+
+		if involvesRightBackpack then
+			if data.fromType ~= 'player' and data.toType ~= 'player' and not involvesBackpack then
+				Utils.LogExploit(source, 'swapItems', 'Triggered event with invalid data', true)
+				return
+			end
+		elseif not involvesBackpack and data.toType ~= 'player' and data.fromType ~= 'player' then
+			Utils.LogExploit(source, 'swapItems', 'Triggered event with invalid data', true)
+			return
+		end
+	end
 
 	data.count = math.max(1, math.floor(data.count or 1))
 
@@ -1698,20 +1962,42 @@ lib.callback.register('ox_inventory:swapItems', function(source, data)
 
 	if not playerInventory or not playerInventory.open then return end
 
-	local toInventory = (data.toType == 'player' and playerInventory) or Inventory(playerInventory.open)
-	local fromInventory = (data.fromType == 'player' and playerInventory) or Inventory(playerInventory.open)
+	local function resolvePanel(panelType)
+		if panelType == 'player' then return playerInventory end
+		if panelType == 'backpack' then return Inventory.GetOpenBackpack(playerInventory) end
+		if panelType == 'rightbackpack' then return Inventory.GetOpenRightBackpack(playerInventory) end
+		return Inventory(playerInventory.open)
+	end
+
+	local toInventory = resolvePanel(data.toType)
+	local fromInventory = resolvePanel(data.fromType)
 
 	if not fromInventory or not toInventory then
+		if data.fromType == 'backpack' or data.toType == 'backpack'
+			or data.fromType == 'rightbackpack' or data.toType == 'rightbackpack' then
+			return false
+		end
+
 		playerInventory:closeInventory()
 		return
 	end
 
     if data.toType == 'inspect' or data.fromType == 'inspect' then return end
 
-    local activeSlots <close> = GetLocks({
+    local lockKeys = {
        	('inventory-%s:slot-%s'):format(fromInventory.id, data.fromSlot),
         ('inventory-%s:slot-%s'):format(toInventory.id, data.toSlot)
-    })
+    }
+
+    if Utility.backpackSlot and (data.fromType == 'backpack' or data.toType == 'backpack') then
+        lockKeys[#lockKeys + 1] = ('inventory-%s:slot-%s'):format(playerInventory.id, Utility.backpackSlot)
+    end
+
+    if playerInventory.rightBackpackSlot and (data.fromType == 'rightbackpack' or data.toType == 'rightbackpack') then
+        lockKeys[#lockKeys + 1] = ('inventory-%s:slot-%s'):format(playerInventory.id, playerInventory.rightBackpackSlot)
+    end
+
+    local activeSlots <close> = GetLocks(lockKeys)
 
 	if not activeSlots then
 		return false, {
@@ -1725,6 +2011,26 @@ lib.callback.register('ox_inventory:swapItems', function(source, data)
 			}
 		}
 	end
+
+    if data.fromType == 'backpack' or data.toType == 'backpack' then
+        local backpack = Inventory.GetOpenBackpack(playerInventory)
+
+        if not backpack
+            or (data.fromType == 'backpack' and fromInventory ~= backpack)
+            or (data.toType == 'backpack' and toInventory ~= backpack) then
+            return false
+        end
+    end
+
+    if data.fromType == 'rightbackpack' or data.toType == 'rightbackpack' then
+        local bagStash = Inventory.GetOpenRightBackpack(playerInventory)
+
+        if not bagStash
+            or (data.fromType == 'rightbackpack' and fromInventory ~= bagStash)
+            or (data.toType == 'rightbackpack' and toInventory ~= bagStash) then
+            return false
+        end
+    end
 
 	local sameInventory = fromInventory.id == toInventory.id
 	local fromOtherPlayer = fromInventory.player and fromInventory ~= playerInventory
@@ -1773,6 +2079,19 @@ lib.callback.register('ox_inventory:swapItems', function(source, data)
 		if fromData then
             if fromData.metadata.container and toInventory.type == 'container' then return false end
             if toData and toData.metadata.container and fromInventory.type == 'container' then return false end
+
+            if toInventory.player and not Utility.CanHoldItem(data.toSlot, fromData.name, Items(fromData.name)) then
+                return false, 'cannot_perform'
+            end
+
+            if fromInventory.player and toData and not Utility.CanHoldItem(data.fromSlot, toData.name, Items(toData.name)) then
+                return false, 'cannot_perform'
+            end
+
+            if (data.toType == 'backpack' or data.toType == 'rightbackpack' or toInventory.type == 'container')
+                and (fromData.metadata.container or Inventory.GetBackpackItem(fromData.name)) then
+                return false
+            end
 
 			local container, containerItem = (not sameInventory and playerInventory.containerSlot) and (fromInventory.type == 'container' and fromInventory or toInventory)
 
@@ -1975,6 +2294,67 @@ lib.callback.register('ox_inventory:swapItems', function(source, data)
 			if fromInventory.changed ~= nil then fromInventory.changed = true end
 			if toInventory.changed ~= nil then toInventory.changed = true end
 
+            local bagWeight
+
+            if data.fromType == 'backpack' or data.toType == 'backpack' then
+                local backpackStash = Inventory.GetOpenBackpack(playerInventory)
+                local bagSlot = Utility.backpackSlot and playerInventory.items[Utility.backpackSlot]
+
+                if backpackStash and bagSlot then
+                    bagWeight = Inventory.SyncBackpackItemWeight(playerInventory, bagSlot, backpackStash.weight)
+
+                    playerInventory:syncSlotsWithPlayer({
+                        { item = bagSlot, inventory = playerInventory.id }
+                    }, playerInventory.weight)
+                end
+            end
+
+            if data.fromType == 'rightbackpack' or data.toType == 'rightbackpack' then
+                local bagStash = Inventory.GetOpenRightBackpack(playerInventory)
+                local bagSlot = playerInventory.rightBackpackSlot and playerInventory.items[playerInventory.rightBackpackSlot]
+
+                if bagStash and bagSlot then
+                    bagWeight = Inventory.SyncBackpackItemWeight(playerInventory, bagSlot, bagStash.weight)
+
+                    playerInventory:syncSlotsWithPlayer({
+                        { item = bagSlot, inventory = playerInventory.id }
+                    }, playerInventory.weight)
+                end
+            end
+
+            if (data.fromType == 'backpack' and data.toType == 'rightbackpack')
+                or (data.fromType == 'rightbackpack' and data.toType == 'backpack') then
+                bagWeight = nil
+            end
+
+            if not sameInventory then
+                if toData and toData.metadata?.id and Inventory.GetBackpackItem(toData.name) then
+                    local stash = getBackpackStash(toData)
+
+                    if stash then
+                        Inventory.SyncBackpackItemWeight(toInventory, toData, stash.weight)
+                    end
+                end
+
+                if fromData and fromData.metadata?.id and Inventory.GetBackpackItem(fromData.name) then
+                    local stash = getBackpackStash(fromData)
+
+                    if stash then
+                        Inventory.SyncBackpackItemWeight(fromInventory, fromData, stash.weight)
+                    end
+                end
+            end
+
+            if playerInventory.rightBackpack and playerInventory.rightBackpackSlot then
+                local watchedSlot = playerInventory.rightBackpackSlot
+
+                if (fromInventory == playerInventory and data.fromSlot == watchedSlot)
+                    or (toInventory == playerInventory and data.toSlot == watchedSlot) then
+                    Inventory.CloseRightBackpack(playerInventory)
+                    TriggerClientEvent('ox_inventory:closeRightBackpack', playerInventory.id)
+                end
+            end
+
             CreateThread(function()
                 if sameInventory then
                     fromInventory:syncSlotsWithClients({
@@ -2036,7 +2416,7 @@ lib.callback.register('ox_inventory:swapItems', function(source, data)
 				end
 			end
 
-			return containerItem and containerItem.weight or true, nil, weaponSlot
+			return bagWeight or (containerItem and containerItem.weight) or true, nil, weaponSlot
 		end
 	end
 end)
@@ -2190,7 +2570,7 @@ function Inventory.GetEmptySlot(inv)
 	local items = inventory.items
 
 	for i = 1, inventory.slots do
-		if not items[i] then
+		if not items[i] and not (inventory.player and Utility.bySlot[i]) then
 			return i
 		end
 	end
@@ -2212,14 +2592,16 @@ function Inventory.GetSlotForItem(inv, itemName, metadata)
 	local emptySlot
 
 	for i = 1, inventory.slots do
-		local slotData = items[i]
+		if not (inventory.player and Utility.bySlot[i]) then
+			local slotData = items[i]
 
-		if not slotData and not emptySlot then
-			emptySlot = i
-		end
+			if not slotData and not emptySlot then
+				emptySlot = i
+			end
 
-		if item.stack and slotData and slotData.name == item.name and table.matches(slotData.metadata, metadata) then
-			return i
+			if item.stack and slotData and slotData.name == item.name and table.matches(slotData.metadata, metadata) then
+				return i
+			end
 		end
 	end
 
@@ -2486,13 +2868,19 @@ RegisterServerEvent('ox_inventory:closeInventory', function()
 
 		inventory:closeInventory(true)
 	end
+
+	if inventory then
+		Inventory.CloseBackpack(inventory)
+		Inventory.CloseRightBackpack(inventory)
+	end
 end)
 
-local function giveItem(playerId, slot, target, count)
-	local fromInventory = Inventory(playerId)
+local function giveItem(playerId, slot, target, count, fromType)
+	local playerInventory = Inventory(playerId)
+	local fromInventory = fromType == 'backpack' and Inventory.GetOpenBackpack(playerInventory) or playerInventory
 	local toInventory = Inventory(target)
 
-	if not fromInventory or not toInventory then return end
+	if not playerInventory or not fromInventory or not toInventory then return end
 
 	count = math.max(1, math.floor(count or 1))
 
@@ -2509,7 +2897,7 @@ local function giveItem(playerId, slot, target, count)
 
 		local item = Items(data.name)
 
-		if not item or data.count < count or not Inventory.CanCarryItem(toInventory, item, count, data.metadata) or #(GetEntityCoords(fromInventory.player.ped) - GetEntityCoords(toInventory.player.ped)) > 15 then
+		if not item or data.count < count or not Inventory.CanCarryItem(toInventory, item, count, data.metadata) or #(GetEntityCoords(playerInventory.player.ped) - GetEntityCoords(toInventory.player.ped)) > 15 then
 			return { 'cannot_give', count, data.label }
 		end
 
@@ -2527,7 +2915,7 @@ local function giveItem(playerId, slot, target, count)
 		end
 
 		local hooks <close> = TriggerEventHooks('swapItems', {
-			source = fromInventory.id,
+			source = playerInventory.id,
 			fromInventory = fromInventory.id,
 			fromType = fromInventory.type,
 			toInventory = toInventory.id,
@@ -2540,8 +2928,19 @@ local function giveItem(playerId, slot, target, count)
 		if hooks.success then
 			if Inventory.AddItem(toInventory, item, count, data.metadata, toSlot) then
 				if Inventory.RemoveItem(fromInventory, item, count, data.metadata, slot) then
+					if fromType == 'backpack' then
+						local bagSlot = Utility.backpackSlot and playerInventory.items[Utility.backpackSlot]
+
+						if bagSlot then
+							Inventory.SyncBackpackItemWeight(playerInventory, bagSlot, fromInventory.weight)
+							playerInventory:syncSlotsWithPlayer({
+								{ item = bagSlot, inventory = playerInventory.id }
+							}, playerInventory.weight)
+						end
+					end
+
 					if server.loglevel > 0 then
-						lib.logger(fromInventory.owner, 'giveItem', ('"%s" gave %sx %s to "%s"'):format(fromInventory.label, count, data.name, toInventory.label))
+						lib.logger(playerInventory.owner, 'giveItem', ('"%s" gave %sx %s to "%s"'):format(playerInventory.label, count, data.name, toInventory.label))
 					end
 
 					return

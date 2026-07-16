@@ -122,6 +122,11 @@ end
 local CraftingBenches = require 'modules.crafting.client'
 local Vehicles = lib.load('data.vehicles')
 local Inventory = require 'modules.inventory.client'
+local Utility = require 'modules.utility.client'
+
+local function getBackpackPanel()
+    return lib.callback.await('ox_inventory:openBackpack', false) or false
+end
 
 ---@param inv string?
 ---@param data any?
@@ -291,7 +296,9 @@ function client.openInventory(inv, data)
         action = 'setupInventory',
         data = {
             leftInventory = left,
-            rightInventory = currentInventory
+            rightInventory = currentInventory,
+            backpackInventory = getBackpackPanel(),
+            rightBackpackInventory = false
         }
     })
 
@@ -349,7 +356,9 @@ RegisterNetEvent('ox_inventory:forceOpenInventory', function(left, right)
 		action = 'setupInventory',
 		data = {
 			leftInventory = left,
-			rightInventory = currentInventory
+			rightInventory = currentInventory,
+			backpackInventory = getBackpackPanel(),
+			rightBackpackInventory = false
 		}
 	})
 end)
@@ -357,6 +366,26 @@ end)
 local Animations = lib.load('data.animations')
 local Items = require 'modules.items.client'
 local usingItem = false
+
+local utilityClothingSlots = {}
+local wornUtility = {}
+
+for i = 1, Utility.count do
+    local def = Utility.slots[i]
+
+    if Utility.clothing[def.role] then
+        utilityClothingSlots[def.slot] = def.role
+    end
+end
+
+local function syncUtilityClothing()
+    for slot, role in pairs(utilityClothingSlots) do
+        local slotItem = PlayerData.inventory[slot]
+        local itemDef = slotItem and Items[slotItem.name]
+
+        Utility.SetClothing(role, itemDef and (itemDef.clothing or Utility.clothing[role]) or nil)
+    end
+end
 
 ---@param data { name: string, label: string, count: number, slot: number, metadata: table<string, any>, weight: number }
 lib.callback.register('ox_inventory:usingItem', function(data, noAnim)
@@ -511,6 +540,8 @@ local function useSlot(slot, noAnim)
 		data.slot = slot
 
 		if item.metadata.container then
+			if item.slot == Utility.backpackSlot then return end
+
 			return client.openInventory('container', item.slot)
 		elseif data.client then
 			if invOpen and data.close then client.closeInventory() end
@@ -880,7 +911,7 @@ local function registerCommands()
 			defaultKey = tostring(i),
 			onPressed = function()
 				if invOpen or EnableWeaponWheel or not invHotkeys or IsNuiFocused() then return end
-				useSlot(i)
+				useSlot(Utility.hotkeys[i] or i)
 			end
 		})
 	end
@@ -987,6 +1018,43 @@ local function updateInventory(data, weight)
 
 	client.setPlayerData('inventory', PlayerData.inventory)
 	TriggerEvent('ox_inventory:updateInventory', changes)
+
+	local clothingChanged = false
+
+	for slot in pairs(utilityClothingSlots) do
+		if changes[slot] ~= nil then
+			clothingChanged = true
+
+			local equipped = changes[slot] ~= false
+
+			if PlayerData.loaded and equipped ~= (wornUtility[slot] or false) then
+				Utils.PlayAnim(0, 'clothingshirt', 'try_shirt_positive_d', 8.0, 3.0, 1200, 49, 0.0, 0, 0, 0)
+			end
+
+			wornUtility[slot] = equipped
+		end
+	end
+
+	if clothingChanged then
+		syncUtilityClothing()
+	end
+
+	if Utility.SyncArmour and Utility.armourSlot and changes[Utility.armourSlot] ~= nil then
+		Utility.SyncArmour()
+	end
+
+	if Utility.backpackSlot and changes[Utility.backpackSlot] ~= nil and invOpen then
+		CreateThread(function()
+			local backpackInventory = getBackpackPanel()
+
+			if invOpen then
+				SendNUIMessage({
+					action = 'setupInventory',
+					data = { backpackInventory = backpackInventory }
+				})
+			end
+		end)
+	end
 end
 
 RegisterNetEvent('ox_inventory:updateSlots', function(items, weights)
@@ -1350,6 +1418,18 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 		}
 	})
 
+	if Utility.count > 0 then
+		SendNUIMessage({ action = 'setupUtility', data = Utility.GetClientConfig() })
+	end
+
+	for slot in pairs(utilityClothingSlots) do
+		wornUtility[slot] = PlayerData.inventory[slot] ~= nil
+	end
+
+	syncUtilityClothing()
+
+	if Utility.SyncArmour then Utility.SyncArmour() end
+
 	PlayerData.loaded = true
 
 	if not client.disablesetupnotification then
@@ -1611,7 +1691,9 @@ RegisterNetEvent('ox_inventory:viewInventory', function(left, right)
 		action = 'setupInventory',
 		data = {
 			leftInventory = left,
-			rightInventory = currentInventory
+			rightInventory = currentInventory,
+			backpackInventory = false,
+			rightBackpackInventory = false
 		}
 	})
 end)
@@ -1676,17 +1758,17 @@ RegisterNUICallback('useItem', function(slot, cb)
 	cb(1)
 end)
 
-local function giveItemToTarget(serverId, slotId, count)
+local function giveItemToTarget(serverId, slotId, count, fromType)
     if type(slotId) ~= 'number' then return TypeError('slotId', 'number', type(slotId)) end
     if count and type(count) ~= 'number' then return TypeError('count', 'number', type(count)) end
 
-    if slotId == currentWeapon?.slot then
+    if (not fromType or fromType == 'player') and slotId == currentWeapon?.slot then
         currentWeapon = Weapon.Disarm(currentWeapon)
     end
 
     Utils.PlayAnim(0, 'mp_common', 'givetake1_a', 1.0, 1.0, 2000, 50, 0.0, 0, 0, 0)
 
-    local notification = lib.callback.await('ox_inventory:giveItem', false, slotId, serverId, count or 0)
+    local notification = lib.callback.await('ox_inventory:giveItem', false, slotId, serverId, count or 0, fromType)
 
     if notification then
         lib.notify({ type = 'error', description = locale(table.unpack(notification)) })
@@ -1723,7 +1805,7 @@ RegisterNUICallback('giveItem', function(data, cb)
 
             if not isGiveTargetValid(option.ped, option.coords) then return end
 
-            return giveItemToTarget(GetPlayerServerId(option.id), data.slot, data.count)
+            return giveItemToTarget(GetPlayerServerId(option.id), data.slot, data.count, data.fromType)
         end
 
         local giveList, n = {}, 0
@@ -1748,7 +1830,7 @@ RegisterNUICallback('giveItem', function(data, cb)
 			title = 'Give item',
 			options = giveList,
 		}, function(selected)
-            giveItemToTarget(giveList[selected].id, data.slot, data.count)
+            giveItemToTarget(giveList[selected].id, data.slot, data.count, data.fromType)
         end)
 
 		return lib.showMenu('ox_inventory:givePlayerList')
@@ -1761,7 +1843,7 @@ RegisterNUICallback('giveItem', function(data, cb)
 			local passenger = GetPedInVehicleSeat(cache.vehicle, cache.seat - 2 * (cache.seat % 2) + 1)
 
 			if passenger ~= 0 and IsEntityVisible(passenger) then
-                return giveItemToTarget(GetPlayerServerId(NetworkGetPlayerIndexFromPed(passenger)), data.slot, data.count)
+                return giveItemToTarget(GetPlayerServerId(NetworkGetPlayerIndexFromPed(passenger)), data.slot, data.count, data.fromType)
 			end
 		end
 
@@ -1771,7 +1853,7 @@ RegisterNUICallback('giveItem', function(data, cb)
     local entity = Utils.Raycast(1|2|4|8|16, GetOffsetFromEntityInWorldCoords(cache.ped, 0.0, 3.0, 0.5), 0.2)
 
     if entity and IsPedAPlayer(entity) and IsEntityVisible(entity) and #(GetEntityCoords(playerPed, true) - GetEntityCoords(entity, true)) < 3.0 then
-        return giveItemToTarget(GetPlayerServerId(NetworkGetPlayerIndexFromPed(entity)), data.slot, data.count)
+        return giveItemToTarget(GetPlayerServerId(NetworkGetPlayerIndexFromPed(entity)), data.slot, data.count, data.fromType)
     end
 end)
 
@@ -1783,6 +1865,22 @@ end)
 RegisterNUICallback('exit', function(_, cb)
 	client.closeInventory()
 	cb(1)
+end)
+
+RegisterNUICallback('openBagPanel', function(slot, cb)
+	cb(1)
+
+	local panel = lib.callback.await('ox_inventory:openRightBackpack', false, slot) or false
+
+	if invOpen then
+		SendNUIMessage({ action = 'setupInventory', data = { rightBackpackInventory = panel } })
+	end
+end)
+
+RegisterNetEvent('ox_inventory:closeRightBackpack', function()
+	if source == '' then return end
+
+	SendNUIMessage({ action = 'setupInventory', data = { rightBackpackInventory = false } })
 end)
 
 lib.callback.register('ox_inventory:startCrafting', function(id, recipe)

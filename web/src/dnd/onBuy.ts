@@ -1,11 +1,13 @@
-import { isSlotWithItem } from '../helpers';
+import { isSlotWithItem, isUtilitySlot } from '../helpers';
 import { store } from '../store';
-import { DragSource, DropTarget } from '../typings';
+import { DragSource, DropTarget, InventoryType } from '../typings';
 import { Items } from '../store/items';
 import { buyItem } from '../thunks/buyItem';
 
 export const onBuy = (source: DragSource, target: DropTarget) => {
   const { inventory: state } = store.getState();
+
+  if (target.inventory !== InventoryType.PLAYER || isUtilitySlot(target.item.slot)) return;
 
   const sourceInventory = state.rightInventory;
   const targetInventory = state.leftInventory;

@@ -8,6 +8,9 @@ import { useExitListener } from '../../hooks/useExitListener';
 import type { Inventory as InventoryProps } from '../../typings';
 import RightInventory from './RightInventory';
 import LeftInventory from './LeftInventory';
+import BackpackInventory from './BackpackInventory';
+import RightBackpackInventory from './RightBackpackInventory';
+import PlayerUtility from './PlayerUtility';
 import Tooltip from '../utils/Tooltip';
 import { closeTooltip } from '../../store/tooltip';
 import InventoryContext from './InventoryContext';
@@ -29,6 +32,8 @@ const Inventory: React.FC = () => {
   useNuiEvent<{
     leftInventory?: InventoryProps;
     rightInventory?: InventoryProps;
+    backpackInventory?: InventoryProps | false;
+    rightBackpackInventory?: InventoryProps | false;
   }>('setupInventory', (data) => {
     dispatch(setupInventory(data));
     !inventoryVisible && setInventoryVisible(true);
@@ -44,9 +49,16 @@ const Inventory: React.FC = () => {
     <>
       <Fade in={inventoryVisible}>
         <div className="inventory-wrapper">
-          <LeftInventory />
-          <InventoryControl />
-          <RightInventory />
+          <div className="inventory-column-left">
+            <LeftInventory />
+            <InventoryControl />
+            <BackpackInventory />
+          </div>
+          <PlayerUtility />
+          <div className="inventory-column-right">
+            <RightInventory />
+            <RightBackpackInventory />
+          </div>
           <Tooltip />
           <InventoryContext />
         </div>

@@ -85,28 +85,117 @@ export const isSlotWithItem = (slot: Slot, strict: boolean = false): slot is Slo
 export const canStack = (sourceSlot: Slot, targetSlot: Slot) =>
   sourceSlot.name === targetSlot.name && isEqual(sourceSlot.metadata, targetSlot.metadata);
 
-export const findAvailableSlot = (item: Slot, data: ItemData, items: Slot[]) => {
-  if (!data.stack) return items.find((target) => target.name === undefined);
+export const findAvailableSlot = (item: Slot, data: ItemData, items: Slot[], inventoryType?: Inventory['type']) => {
+  const targets = inventoryType === InventoryType.PLAYER ? items.filter((slot) => !isUtilitySlot(slot.slot)) : items;
 
-  const stackableSlot = items.find((target) => target.name === item.name && isEqual(target.metadata, item.metadata));
+  if (!data.stack) return targets.find((target) => target.name === undefined);
 
-  return stackableSlot || items.find((target) => target.name === undefined);
+  const stackableSlot = targets.find((target) => target.name === item.name && isEqual(target.metadata, item.metadata));
+
+  return stackableSlot || targets.find((target) => target.name === undefined);
 };
+
+const getInventoryByType = (state: State, type: Inventory['type']): Inventory =>
+  type === InventoryType.PLAYER
+    ? state.leftInventory
+    : type === InventoryType.BACKPACK
+      ? state.backpackInventory
+      : type === InventoryType.RIGHTBACKPACK
+        ? state.rightBackpackInventory
+        : state.rightInventory;
 
 export const getTargetInventory = (
   state: State,
   sourceType: Inventory['type'],
   targetType?: Inventory['type']
 ): { sourceInventory: Inventory; targetInventory: Inventory } => ({
-  sourceInventory: sourceType === InventoryType.PLAYER ? state.leftInventory : state.rightInventory,
+  sourceInventory: getInventoryByType(state, sourceType),
   targetInventory: targetType
-    ? targetType === InventoryType.PLAYER
-      ? state.leftInventory
-      : state.rightInventory
-    : sourceType === InventoryType.PLAYER
+    ? getInventoryByType(state, targetType)
+    : sourceType === InventoryType.PLAYER || sourceType === InventoryType.BACKPACK
       ? state.rightInventory
       : state.leftInventory,
 });
+
+export const getUtilitySlotConfig = (slot: number) =>
+  store.getState().inventory.utility.find((config) => config.slot === slot);
+
+export const isUtilitySlot = (slot: number) => getUtilitySlotConfig(slot) !== undefined;
+
+export const utilitySlotAccepts = (slot: number, itemName: string) => {
+  const config = getUtilitySlotConfig(slot);
+
+  if (!config) return true;
+
+  const isWeapon = itemName.startsWith('WEAPON_');
+
+  if (config.weapons === false && isWeapon) return false;
+
+  if (!config.items && !config.weapons) return true;
+
+  return !!(config.items?.includes(itemName) || (config.weapons && isWeapon));
+};
+
+export const getSlotHotkey = (slot: number, inventoryType: Inventory['type']): number | undefined => {
+  if (inventoryType !== InventoryType.PLAYER) return undefined;
+
+  const utility = store.getState().inventory.utility;
+
+  if (!utility.length) return slot <= 5 ? slot : undefined;
+
+  return utility.find((config) => config.slot === slot)?.hotkey;
+};
+
+export const isBackpackItem = (itemName: string) =>
+  store
+    .getState()
+    .inventory.utility.some((config) => config.role === 'backpack' && config.items?.includes(itemName));
+
+export const canPairInventories = (sourceType: Inventory['type'], targetType: Inventory['type']) => {
+  if (sourceType === targetType) return true;
+
+  if (sourceType === InventoryType.RIGHTBACKPACK || targetType === InventoryType.RIGHTBACKPACK)
+    return (
+      sourceType === InventoryType.PLAYER ||
+      targetType === InventoryType.PLAYER ||
+      sourceType === InventoryType.BACKPACK ||
+      targetType === InventoryType.BACKPACK
+    );
+
+  return true;
+};
+
+export const canMoveBetweenSlots = (
+  sourceType: Inventory['type'],
+  sourceSlot: Slot,
+  targetType: Inventory['type'],
+  targetSlot: Slot
+): boolean => {
+  if (!canPairInventories(sourceType, targetType)) return false;
+
+  if (!isSlotWithItem(sourceSlot)) return false;
+
+  if (
+    (targetType === InventoryType.CONTAINER ||
+      targetType === InventoryType.BACKPACK ||
+      targetType === InventoryType.RIGHTBACKPACK) &&
+    (sourceSlot.metadata?.container !== undefined || isBackpackItem(sourceSlot.name))
+  )
+    return false;
+
+  if (targetType === InventoryType.PLAYER && !utilitySlotAccepts(targetSlot.slot, sourceSlot.name)) return false;
+
+  if (
+    sourceType === InventoryType.PLAYER &&
+    isUtilitySlot(sourceSlot.slot) &&
+    isSlotWithItem(targetSlot) &&
+    targetSlot.slot !== sourceSlot.slot &&
+    !utilitySlotAccepts(sourceSlot.slot, targetSlot.name)
+  )
+    return false;
+
+  return true;
+};
 
 export const itemDurability = (metadata: any, curTime: number) => {
   // sorry dunak
