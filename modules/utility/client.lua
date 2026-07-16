@@ -105,7 +105,12 @@ if armour and Utility.armourSlot then
 
             if plates then
                 SetPedArmour(cache.ped, math.min(plates * armour.armourPerPlate, 100))
-                lib.notify({ type = 'success', description = successLabel })
+                -- the action succeeded, but a response alongside it reports an outcome worth flagging
+                if response then
+                    lib.notify({ type = 'inform', description = locale(response) })
+                else
+                    lib.notify({ type = 'success', description = successLabel })
+                end
             elseif response then
                 lib.notify({ type = 'error', description = locale(response) })
             end

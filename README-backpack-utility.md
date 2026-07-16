@@ -179,7 +179,8 @@ Item images used by the UI: `web/images/<item>.png`.
 
 `ui_equipment`, `ui_backpack`, `ui_armour`, `ui_phone`, `ui_parachute`,
 `ui_radio`, `ui_weapon`, `ui_utility`, `ui_hotkey`, `ui_open_backpack`,
-`ui_alt_lmb_bag`, `ui_rmb_bag` (see `locales/en.json`).
+`ui_alt_lmb_bag`, `ui_rmb_bag`, and the `armour_*` plate strings (see
+`locales/en.json`).
 
 ---
 
@@ -246,8 +247,9 @@ Item images used by the UI: `web/images/<item>.png`.
 - **Remove Plates only refunds undamaged plates**: a plate is recoverable while
   it still holds a full `armourPerPlate`, so with the default 50/plate a vest at
   100 returns 2 plates, at 60 returns 1 (the worn plate is destroyed along with
-  its remaining 10), and at 10 returns none. This is what stops remove+reinsert
-  from being a free vest repair.
+  its remaining 10), and at 10 returns none — the player is told so with
+  `armour_plates_destroyed` instead of the usual success notify. This is what
+  stops remove+reinsert from being a free vest repair.
 - `metadata.plates` is `ceil(armour / armourPerPlate)` — a partly worn plate is
   still a plate that stops bullets, and it caps the armour the vest can hold.
   The *refund* uses `floor`, which is why a damaged plate protects you but

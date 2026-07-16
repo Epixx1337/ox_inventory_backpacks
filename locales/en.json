@@ -34,6 +34,7 @@
   "armour_removing_plates": "Removing armour plates..",
   "armour_plate_inserted": "Plate inserted",
   "armour_plates_removed": "Plates removed",
+  "armour_plates_destroyed": "The plates were too damaged to recover",
   "armour_no_vest": "You are not wearing a vest",
   "armour_plates_full": "The vest cannot hold more plates",
   "armour_no_plates": "No plates available",

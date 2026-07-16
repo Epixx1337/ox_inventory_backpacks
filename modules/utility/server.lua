@@ -74,7 +74,7 @@ lib.callback.register('ox_inventory:removeArmourPlates', function(source)
         lib.logger(inv.owner, 'armourPlates', ('"%s" removed %sx plates from "%s" (%s destroyed)'):format(inv.label, intact, vest.name, plates - intact))
     end
 
-    return 0
+    return 0, intact == 0 and 'armour_plates_destroyed' or nil
 end)
 
 RegisterNetEvent('ox_inventory:updateArmourPlates', function(currentArmour)
